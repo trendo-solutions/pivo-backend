@@ -40,6 +40,23 @@ app.get('/healthz', (req, res) => {
   res.json({ ok: true, service: 'pivo-backend' });
 });
 
+// Friendly index — the root is an API server, not a website
+app.get('/', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'pivo-backend',
+    site: 'https://pivo-sports.netlify.app',
+    endpoints: [
+      'GET /healthz',
+      'GET/POST /api/meets (+ /:meetId/rsvp)',
+      'GET/POST /api/clubs',
+      'GET/POST /api/competitions',
+      'POST /api/payments (Wise checkout)',
+      'POST /api/webhooks/wise (Wise webhook receiver)',
+    ],
+  });
+});
+
 app.use('/api/clubs', clubsRouter);
 app.use('/api/meets', meetsRouter);
 app.use('/api/competitions', competitionsRouter);
