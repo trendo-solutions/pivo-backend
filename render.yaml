@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pivo-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        sync: false # set to your Netlify URL(s), comma-separated
+      - key: WISE_WEBHOOK_PUBLIC_KEY
+        sync: false # paste Wise's published webhook public key here
