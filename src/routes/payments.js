@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const store = require('../store');
+const wrap = require('../wrap');
 
 const router = express.Router();
 
@@ -10,7 +11,7 @@ const VALID_KINDS = ['club_dues', 'meet_fee', 'competition_fee', 'store_order'];
 // Creates a payment reference the frontend shows to the payer (matches the
 // "Wise payment link" modal in the Pivo UI). The reference is what we
 // match against when Wise's webhook confirms the transfer.
-router.post('/', (req, res) => {
+router.post('/', wrap(async (req, res) => {
   const { kind, targetId, memberId, memberName, amount } = req.body || {};
   if (!VALID_KINDS.includes(kind)) {
     return res.status(400).json({ error: `kind must be one of: ${VALID_KINDS.join(', ')}` });
@@ -20,7 +21,7 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'memberName is required' });
   }
 
-  const record = store.createPaymentRequest({
+  const record = await store.createPaymentRequest({
     kind,
     targetId,
     memberId,
@@ -29,24 +30,24 @@ router.post('/', (req, res) => {
   });
 
   res.status(201).json(record);
-});
+}));
 
 // GET /api/payments/:ref
-router.get('/:ref', (req, res) => {
-  const record = store.getPaymentByRef(req.params.ref);
+router.get('/:ref', wrap(async (req, res) => {
+  const record = await store.getPaymentByRef(req.params.ref);
   if (!record) return res.status(404).json({ error: 'payment reference not found' });
   res.json(record);
-});
+}));
 
 // Dev-only helper that stands in for a real Wise webhook while you're
 // testing locally or before Wise is fully wired up. Disabled in production
 // so nobody can mark a payment "confirmed" without a real webhook call.
 if (process.env.NODE_ENV !== 'production') {
-  router.post('/:ref/simulate-confirm', (req, res) => {
-    const record = store.confirmPayment(req.params.ref);
+  router.post('/:ref/simulate-confirm', wrap(async (req, res) => {
+    const record = await store.confirmPayment(req.params.ref);
     if (!record) return res.status(404).json({ error: 'payment reference not found' });
     res.json(record);
-  });
+  }));
 }
 
 module.exports = router;
@@ -75,7 +76,7 @@ function verifyWiseSignature(rawBody, signatureHeader) {
 
 // Mounted separately at /api/webhooks/wise in server.js so it can read the
 // raw request body (needed for signature verification) before JSON parsing.
-function wiseWebhookHandler(req, res) {
+async function doWiseWebhook(req, res) {
   const signatureHeader = req.header('X-Signature-SHA256');
   const { verified, skipped, error } = verifyWiseSignature(req.rawBody, signatureHeader);
 
@@ -108,7 +109,7 @@ function wiseWebhookHandler(req, res) {
     return res.status(400).json({ error: 'no payment reference found in payload' });
   }
 
-  const record = store.getPaymentByRef(reference);
+  const record = await store.getPaymentByRef(reference);
   if (!record) {
     // Not one of ours (or already cleaned up) — acknowledge so Wise doesn't retry.
     return res.status(200).json({ ok: true, matched: false });
@@ -116,10 +117,14 @@ function wiseWebhookHandler(req, res) {
 
   const isSuccessState = !state || ['outgoing_payment_sent', 'funds_converted', 'completed'].includes(state);
   if (isSuccessState) {
-    store.confirmPayment(reference);
+    await store.confirmPayment(reference);
   }
 
   res.status(200).json({ ok: true, matched: true });
+}
+
+function wiseWebhookHandler(req, res, next) {
+  doWiseWebhook(req, res).catch(next);
 }
 
 module.exports.wiseWebhookHandler = wiseWebhookHandler;

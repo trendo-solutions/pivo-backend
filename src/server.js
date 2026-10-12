@@ -72,6 +72,18 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Pivo backend listening on port ${PORT}`);
-});
+// Boot: prepare the schema in Neon first, then start listening. If the
+// database is unreachable at boot we exit non-zero so Render surfaces a
+// failed deploy instead of running with a broken data layer.
+const { ensureSchema } = require('./db');
+
+ensureSchema()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Pivo backend listening on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to prepare database schema:', err.message);
+    process.exit(1);
+  });
