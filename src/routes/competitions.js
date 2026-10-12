@@ -11,11 +11,11 @@ router.get('/', wrap(async (req, res) => {
 
 // POST /api/competitions  { name, fee, teams }
 router.post('/', wrap(async (req, res) => {
-  const { name, fee, teams } = req.body || {};
+  const { name, sport, fee, teams } = req.body || {};
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'name is required' });
   }
-  const competition = await store.createCompetition({ name: String(name).trim(), fee, teams });
+  const competition = await store.createCompetition({ name: String(name).trim(), sport: sport && String(sport).trim(), fee, teams });
   res.status(201).json(competition);
 }));
 

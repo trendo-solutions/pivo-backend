@@ -11,11 +11,11 @@ router.get('/', wrap(async (req, res) => {
 
 // POST /api/meets  { title, date, time, fee }
 router.post('/', wrap(async (req, res) => {
-  const { title, date, time, fee } = req.body || {};
+  const { title, sport, date, time, fee } = req.body || {};
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: 'title is required' });
   }
-  const meet = await store.createMeet({ title: String(title).trim(), date, time, fee });
+  const meet = await store.createMeet({ title: String(title).trim(), sport: sport && String(sport).trim(), date, time, fee });
   res.status(201).json(meet);
 }));
 

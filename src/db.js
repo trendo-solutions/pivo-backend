@@ -52,6 +52,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS meets (
       id         TEXT PRIMARY KEY,
       title      TEXT NOT NULL,
+      sport      TEXT NOT NULL DEFAULT 'General',
       date       TEXT NOT NULL DEFAULT 'TBD',
       time       TEXT NOT NULL DEFAULT 'TBD',
       fee        NUMERIC NOT NULL DEFAULT 0,
@@ -76,6 +77,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS competitions (
       id         TEXT PRIMARY KEY,
       name       TEXT NOT NULL,
+      sport      TEXT NOT NULL DEFAULT 'General',
       fee        NUMERIC NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -105,6 +107,10 @@ async function ensureSchema() {
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
       confirmed_at TIMESTAMPTZ
     );
+
+    -- Schema evolution for databases created before these columns existed
+    ALTER TABLE meets ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'General';
+    ALTER TABLE competitions ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'General';
   `);
 }
 

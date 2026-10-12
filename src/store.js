@@ -93,7 +93,7 @@ async function setClubMemberPaid(clubId, memberId, paid) {
 
 // ---------- Meets ----------
 const MEET_SELECT = `
-  SELECT m.id, m.title, m.date, m.time, m.fee,
+  SELECT m.id, m.title, m.sport, m.date, m.time, m.fee,
     COALESCE((SELECT array_agg(r.name ORDER BY r.created_at, r.name)
               FROM meet_rsvps r WHERE r.meet_id = m.id AND r.status = 'going'), '{}') AS going,
     COALESCE((SELECT array_agg(r.name ORDER BY r.created_at, r.name)
@@ -106,6 +106,7 @@ function meetRow(r) {
   return {
     id: r.id,
     title: r.title,
+    sport: r.sport || 'General',
     date: r.date,
     time: r.time,
     fee: Number(r.fee),
@@ -125,14 +126,14 @@ async function getMeet(meetId) {
   return rows.length ? meetRow(rows[0]) : null;
 }
 
-async function createMeet({ title, date, time, fee }) {
+async function createMeet({ title, sport, date, time, fee }) {
   const id = uid();
   const { rows } = await db.query(
-    'INSERT INTO meets (id, title, date, time, fee) VALUES ($1, $2, $3, $4, $5) RETURNING id, title, date, time, fee',
-    [id, title, date || 'TBD', time || 'TBD', Number(fee) || 0]
+    'INSERT INTO meets (id, title, sport, date, time, fee) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, title, sport, date, time, fee',
+    [id, title, sport || 'General', date || 'TBD', time || 'TBD', Number(fee) || 0]
   );
   const m = rows[0];
-  return { id: m.id, title: m.title, date: m.date, time: m.time, fee: Number(m.fee), going: [], waitlist: [], paidBy: [] };
+  return { id: m.id, title: m.title, sport: m.sport, date: m.date, time: m.time, fee: Number(m.fee), going: [], waitlist: [], paidBy: [] };
 }
 
 async function rsvpMeet(meetId, name, status) {
@@ -156,7 +157,7 @@ async function markMeetPaid(meetId, name) {
 
 // ---------- Competitions ----------
 const COMP_SELECT = `
-  SELECT c.id, c.name, c.fee,
+  SELECT c.id, c.name, c.sport, c.fee,
     COALESCE((SELECT array_agg(t.name ORDER BY t.position)
               FROM competition_teams t WHERE t.competition_id = c.id), '{}') AS teams,
     COALESCE((SELECT array_agg(r.name ORDER BY r.created_at, r.name)
@@ -167,6 +168,7 @@ function competitionRow(r) {
   return {
     id: r.id,
     name: r.name,
+    sport: r.sport || 'General',
     fee: Number(r.fee),
     teams: r.teams || [],
     registered: r.registered || [],
@@ -183,12 +185,12 @@ async function getCompetition(competitionId) {
   return rows.length ? competitionRow(rows[0]) : null;
 }
 
-async function createCompetition({ name, fee, teams }) {
+async function createCompetition({ name, sport, fee, teams }) {
   const id = uid();
   const teamList = Array.isArray(teams) && teams.length ? teams : ['Team A', 'Team B'];
   const { rows } = await db.query(
-    'INSERT INTO competitions (id, name, fee) VALUES ($1, $2, $3) RETURNING id, name, fee',
-    [id, name, Number(fee) || 0]
+    'INSERT INTO competitions (id, name, sport, fee) VALUES ($1, $2, $3, $4) RETURNING id, name, sport, fee',
+    [id, name, sport || 'General', Number(fee) || 0]
   );
   for (let i = 0; i < teamList.length; i += 1) {
     await db.query('INSERT INTO competition_teams (competition_id, name, position) VALUES ($1, $2, $3)', [
@@ -198,7 +200,7 @@ async function createCompetition({ name, fee, teams }) {
     ]);
   }
   const c = rows[0];
-  return { id: c.id, name: c.name, fee: Number(c.fee), teams: teamList.map(String), registered: [] };
+  return { id: c.id, name: c.name, sport: c.sport, fee: Number(c.fee), teams: teamList.map(String), registered: [] };
 }
 
 async function registerForCompetition(competitionId, name) {
