@@ -26,4 +26,17 @@ router.get('/:competitionId', wrap(async (req, res) => {
   res.json(competition);
 }));
 
+// POST /api/competitions/:competitionId/register  { name }
+// Free competitions register directly; paid ones are registered by the
+// payment webhook (kind: competition_fee) after the transfer confirms.
+router.post('/:competitionId/register', wrap(async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  const competition = await store.registerForCompetition(req.params.competitionId, String(name).trim());
+  if (!competition) return res.status(404).json({ error: 'competition not found' });
+  res.json(competition);
+}));
+
 module.exports = router;
