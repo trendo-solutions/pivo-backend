@@ -6,6 +6,7 @@ const meetsRouter = require('./routes/meets');
 const competitionsRouter = require('./routes/competitions');
 const paymentsRouter = require('./routes/payments');
 const { wiseWebhookHandler } = require('./routes/payments');
+const { query: dbQuery } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -40,6 +41,37 @@ app.get('/healthz', (req, res) => {
   res.json({ ok: true, service: 'pivo-backend' });
 });
 
+// Diagnostic: what DB connection does THIS instance actually hold, and can it
+// write? The write probe is a CREATE TABLE inside a transaction that always
+// rolls back, so nothing is ever left behind. Answers "is Render's DATABASE_URL
+// a read-only role/endpoint?" in one request.
+app.get('/healthz/db', async (req, res) => {
+  const out = { ok: true, service: 'pivo-backend' };
+  try {
+    const info = await dbQuery(`
+      SELECT current_user AS role,
+             current_database() AS db,
+             inet_server_addr() AS server_ip,
+             current_setting('transaction_read_only') AS session_read_only,
+             current_setting('server_version') AS server_version
+    `);
+    Object.assign(out, info.rows[0]);
+  } catch (err) {
+    out.info_error = { message: err.message, code: err.code, routine: err.routine };
+  }
+  try {
+    await dbQuery('BEGIN');
+    await dbQuery('CREATE TABLE IF NOT EXISTS _write_probe(id int)');
+    await dbQuery('ROLLBACK');
+    out.write_probe = 'ok';
+  } catch (err) {
+    out.write_probe = 'failed';
+    out.write_error = { message: err.message, code: err.code, routine: err.routine };
+    try { await dbQuery('ROLLBACK'); } catch (_) { /* connection may be dead */ }
+  }
+  res.json(out);
+});
+
 // Friendly index — the root is an API server, not a website
 app.get('/', (req, res) => {
   res.json({
@@ -48,6 +80,7 @@ app.get('/', (req, res) => {
     site: 'https://pivo-sports.netlify.app',
     endpoints: [
       'GET /healthz',
+      'GET /healthz/db (connection diagnostic)',
       'GET/POST /api/meets (+ /:meetId/rsvp)',
       'GET/POST /api/clubs',
       'GET/POST /api/competitions',
