@@ -6,7 +6,6 @@ const meetsRouter = require('./routes/meets');
 const competitionsRouter = require('./routes/competitions');
 const paymentsRouter = require('./routes/payments');
 const { wiseWebhookHandler } = require('./routes/payments');
-const { query: dbQuery } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,34 +40,69 @@ app.get('/healthz', (req, res) => {
   res.json({ ok: true, service: 'pivo-backend' });
 });
 
-// Diagnostic: what DB connection does THIS instance actually hold, and can it
-// write? The write probe is a CREATE TABLE inside a transaction that always
-// rolls back, so nothing is ever left behind. Answers "is Render's DATABASE_URL
-// a read-only role/endpoint?" in one request.
+// Diagnostic: run the exact statement shapes the app's write paths use, each
+// inside its own dedicated-client transaction that always rolls back — so the
+// response shows WHICH statement fails and why, without leaving any trace.
 app.get('/healthz/db', async (req, res) => {
-  const out = { ok: true, service: 'pivo-backend' };
+  const out = { ok: true, service: 'pivo-backend', probes: {} };
+  const pool = require('./db').pool;
+
+  async function runProbe(key, fn) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await fn(client);
+      await client.query('ROLLBACK');
+      out.probes[key] = 'ok';
+    } catch (err) {
+      out.probes[key] = { failed: true, message: err.message, code: err.code, routine: err.routine };
+      try { await client.query('ROLLBACK'); } catch (_) { /* aborted txn */ }
+    } finally {
+      client.release();
+    }
+  }
+
   try {
-    const info = await dbQuery(`
+    const info = await pool.query(`
       SELECT current_user AS role,
              current_database() AS db,
-             inet_server_addr() AS server_ip,
              current_setting('transaction_read_only') AS session_read_only,
              current_setting('server_version') AS server_version
     `);
     Object.assign(out, info.rows[0]);
   } catch (err) {
-    out.info_error = { message: err.message, code: err.code, routine: err.routine };
+    out.info_error = { message: err.message, code: err.code };
   }
+
+  let meetId = null;
+  let compId = null;
   try {
-    await dbQuery('BEGIN');
-    await dbQuery('CREATE TABLE IF NOT EXISTS _write_probe(id int)');
-    await dbQuery('ROLLBACK');
-    out.write_probe = 'ok';
+    const m = await pool.query('SELECT id FROM meets ORDER BY created_at LIMIT 1');
+    meetId = m.rows[0] && m.rows[0].id;
+    const c = await pool.query('SELECT id FROM competitions ORDER BY created_at LIMIT 1');
+    compId = c.rows[0] && c.rows[0].id;
   } catch (err) {
-    out.write_probe = 'failed';
-    out.write_error = { message: err.message, code: err.code, routine: err.routine };
-    try { await dbQuery('ROLLBACK'); } catch (_) { /* connection may be dead */ }
+    out.id_error = { message: err.message, code: err.code };
   }
+
+  await runProbe('create_table', (cl) => cl.query('CREATE TABLE IF NOT EXISTS _write_probe(id int)'));
+  await runProbe('delete_rsvps', (cl) => cl.query("DELETE FROM meet_rsvps WHERE meet_id = '__probe__' AND name = '__probe__'"));
+  if (meetId) {
+    await runProbe('rsvp_insert_delete', async (cl) => {
+      await cl.query("INSERT INTO meet_rsvps (meet_id, name, status) VALUES ($1, '__probe__', 'going')", [meetId]);
+      await cl.query("DELETE FROM meet_rsvps WHERE meet_id = $1 AND name = '__probe__'", [meetId]);
+    });
+    await runProbe('meet_insert_delete', async (cl) => {
+      await cl.query("INSERT INTO meets (id, title, sport, date, time, fee) VALUES ('__probe__', 'Probe', 'General', 'TBD', 'TBD', 0)");
+      await cl.query("DELETE FROM meets WHERE id = '__probe__'");
+    });
+  }
+  if (compId) {
+    await runProbe('comp_register_on_conflict', (cl) =>
+      cl.query("INSERT INTO competition_registrations (competition_id, name) VALUES ($1, '__probe__') ON CONFLICT DO NOTHING", [compId])
+    );
+  }
+
   res.json(out);
 });
 
@@ -102,7 +136,14 @@ app.use((req, res) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({ error: 'internal server error' });
+  // Pre-launch only: echo the real failure so diagnostics don't require log
+  // access. REMOVE detail/code/where before the site goes public.
+  res.status(500).json({
+    error: 'internal server error',
+    detail: err.message || String(err),
+    code: err.code || null,
+    where: ((err.stack || '').split('\n')[1] || '').trim() || null,
+  });
 });
 
 // Boot: prepare the schema in Neon first, then start listening. If the
